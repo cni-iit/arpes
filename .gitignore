@@ -1,6 +1,6 @@
 ## SAFETY LOCK ######################################################
 ## Ignores a folder named "tests" where copies of the scripts 
-## and sensible data for testing may be allocated.
+## and sensible data for testing may be stored.
 tests/
 
 
