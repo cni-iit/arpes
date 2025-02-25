@@ -17,14 +17,17 @@ from tqdm import tqdm
 
 # === k-E data functions ===
 
-def read_spectral_data_kE(file_path, max_energy=0.0):
+def read_spectral_data_kE(file_path,  
+                          min_e=-1, max_e=0.0):
     """
     Read spectral data from a txt file and return it as a DataFrame with proper indexing.
     
     Parameters:
     file_path : str or Path
         Path to the data file
-    max_energy : float
+    min_e : float
+        Minimum energy value to include
+    max_e : float
         Maximum energy value to include
     
     Returns:
