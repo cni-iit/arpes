@@ -68,7 +68,7 @@ def read_spectral_data_kE(
         intensity_data,
         index=wavevector_values,
         columns=energy_values
-    )
+        )
     
     # Appropriately label rows and columns of the DataFrame
     data_df.index.name = 'Wavevector'
