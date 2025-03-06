@@ -6,10 +6,10 @@ CNI-IIT's repository of ARPES data analysis and plotting procedures.
 ## Features
 
 ### Currently available
-- Plot and save k-E dispersions and k-k isoenergetic maps previously exported as `.csv` from *Igor Pro* (`.ipynb` version)
+- Plot and save k-E dispersions and k-k isoenergetic maps previously exported as `.csv` from *Igor Pro* (`.ipynb` and `.py` version)
 
 ### To be added
-- Plot and save k-E dispersions and k-k isoenergetic maps previously exported as `.csv` from *Igor Pro* (`.py` version)
+
 
 ***
 
