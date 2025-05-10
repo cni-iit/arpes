@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import glob
+import re
+import ast
 
 def plot_graph_from_file(file_path, points, rectangles, save_path=None):
     """
@@ -99,13 +101,88 @@ def plot_graph_from_file(file_path, points, rectangles, save_path=None):
         print(f"Error processing {file_path}: {str(e)}")
         return False
 
-def process_all_txt_files(points, rectangles, output_dir=None):
+def read_measure_coords(file_path):
+    """
+    Read points and rectangles from MeasureCoords.txt file.
+    
+    The file format should be:
+    
+    [POINTS]
+    x, y, label
+    x, y, label
+    ...
+    
+    [RECTANGLES]
+    x_stage, y_stage, (x_min, x_max), (y_min, y_max), label
+    x_stage, y_stage, (x_min, x_max), (y_min, y_max), label
+    ...
+    
+    Returns:
+        tuple: (points, rectangles) where:
+            - points is a list of tuples (x, y, label)
+            - rectangles is a list of tuples (x_stage, y_stage, x_scan_exten, y_scan_exten, label)
+    """
+    try:
+        points = []
+        rectangles = []
+        
+        current_section = None
+        
+        with open(file_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                
+                # Skip empty lines
+                if not line:
+                    continue
+                
+                # Check for section headers
+                if line.upper() == '[POINTS]':
+                    current_section = 'points'
+                    continue
+                elif line.upper() == '[RECTANGLES]':
+                    current_section = 'rectangles'
+                    continue
+                
+                # Process data based on current section
+                if current_section == 'points':
+                    try:
+                        # Split the line by comma and strip whitespace
+                        parts = [p.strip() for p in line.split(',', 2)]
+                        if len(parts) == 3:
+                            x = float(eval(parts[0]))  # Allow expressions like 418.6+20.5
+                            y = float(eval(parts[1]))  # Allow expressions like 4280.7-6.8
+                            label = parts[2].strip("'\"")  # Remove quotes if present
+                            points.append((x, y, label))
+                    except Exception as e:
+                        print(f"Error parsing point: {line}. Error: {str(e)}")
+                
+                elif current_section == 'rectangles':
+                    try:
+                        # Use regex to find all parts
+                        matches = re.match(r'(.*?),\s*(.*?),\s*(\(.*?\)),\s*(\(.*?\)),\s*(.*?)', line)
+                        if matches:
+                            x_stage = float(eval(matches.group(1)))
+                            y_stage = float(eval(matches.group(2)))
+                            x_scan_exten = ast.literal_eval(matches.group(3))
+                            y_scan_exten = ast.literal_eval(matches.group(4))
+                            label = matches.group(5).strip("'\"")
+                            rectangles.append((x_stage, y_stage, x_scan_exten, y_scan_exten, label))
+                    except Exception as e:
+                        print(f"Error parsing rectangle: {line}. Error: {str(e)}")
+        
+        return points, rectangles
+    
+    except Exception as e:
+        print(f"Error reading measure coordinates file: {str(e)}")
+        return [], []
+
+def process_all_txt_files(coords_file_name="MeasureCoords.txt", output_dir=None):
     """
     Process all txt files in the script's directory and generate plots.
     
     Args:
-        points: List of points [x, y, label]
-        rectangles: List of rectangles [x_stage, y_stage, x_scan_exten, y_scan_exten, label]
+        coords_file_name: Name of the file containing points and rectangles coordinates
         output_dir: Directory to save output plots (optional)
     """
     # Get the script's directory
@@ -115,14 +192,47 @@ def process_all_txt_files(points, rectangles, output_dir=None):
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
     
-    # Find all txt files in the directory
-    txt_files = glob.glob(os.path.join(script_dir, "*.txt"))
+    # Path to the coordinates file
+    coords_file_path = os.path.join(script_dir, coords_file_name)
     
-    if not txt_files:
-        print("No .txt files found in the directory.")
+    # Check if coordinates file exists
+    if not os.path.isfile(coords_file_path):
+        print(f"Coordinates file '{coords_file_name}' not found in {script_dir}")
+        print(f"Creating a template coordinates file at {coords_file_path}")
+        
+        # Create a template file
+        with open(coords_file_path, 'w') as f:
+            f.write("[POINTS]\n")
+            f.write("# Format: x, y, label\n")
+            f.write("418.6+20.5, 4280.7-6.8, '1744-50,52-56,60'\n")
+            f.write("418.6-5.0, 4280.9-5.2, '1751,57-59,61'\n")
+            f.write("\n")
+            f.write("[RECTANGLES]\n")
+            f.write("# Format: x_stage, y_stage, (x_min, x_max), (y_min, y_max), label\n")
+            f.write("448.8, 4260.7, (-40, 40), (-30, 30), '1742'\n")
+            f.write("418.7, 4280.7, (-40, 40), (-30, 30), '1743'\n")
+        
+        print(f"Please edit {coords_file_name} with your coordinates and run the script again.")
         return
     
-    print(f"Found {len(txt_files)} .txt files to process.")
+    # Read points and rectangles from the coordinates file
+    points, rectangles = read_measure_coords(coords_file_path)
+    
+    if not points and not rectangles:
+        print("No valid points or rectangles found in the coordinates file.")
+        return
+    
+    print(f"Loaded {len(points)} points and {len(rectangles)} rectangles from {coords_file_name}")
+    
+    # Find all txt files in the directory (excluding the coordinates file)
+    txt_files = [f for f in glob.glob(os.path.join(script_dir, "*.txt")) 
+                if os.path.basename(f).lower() != coords_file_name.lower()]
+    
+    if not txt_files:
+        print("No data .txt files found in the directory.")
+        return
+    
+    print(f"Found {len(txt_files)} data .txt files to process.")
     
     for txt_file in txt_files:
         file_name = os.path.basename(txt_file)
@@ -138,25 +248,11 @@ def process_all_txt_files(points, rectangles, output_dir=None):
         if success and save_path:
             print(f"Saved plot to: {save_path}")
 
-# Define points and rectangles (same as in your example)
-points = [
-    (418.6 +20.5, 4280.7 - 6.8, '1744-50,52-56,60'), 
-    (418.6 - 5.0, 4280.9 - 5.2, '1751,57-59,61'),
-    (418.6 - 5.0, 4280.9 +11.6, '1762,66'),
-    (418.6 +20.3, 4280.9 -18.0, '1763,67,68'),
-    (418.6 -33.0, 4280.9 +20.0, '1764,65')
-]
-
-rectangles = [
-    (448.8, 4260.7, (-40,40), (-30,30), '1742'),
-    (418.7, 4280.7, (-40,40), (-30,30), '1743'),
-    (418.6, 4280.9, (- 5,20), (-18,11), '1769')
-]
-
 if __name__ == "__main__":
     # Set to None to display plots instead of saving them
     # or specify a directory path to save all plots
     output_dir = "intensity_maps"
     
     # Process all txt files and generate plots
-    process_all_txt_files(points, rectangles, output_dir)
+    # This will read coordinates from "MeasureCoords.txt" by default
+    process_all_txt_files(coords_file_name="MeasureCoords.txt", output_dir=output_dir)
