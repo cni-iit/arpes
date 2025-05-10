@@ -160,7 +160,7 @@ def read_measure_coords(file_path):
                 elif current_section == 'rectangles':
                     try:
                         # Use regex to find all parts
-                        matches = re.match(r'(.*?),\s*(.*?),\s*(\(.*?\)),\s*(\(.*?\)),\s*(.*?)', line)
+                        matches = re.match(r'(.*?),\s*(.*?),\s*(\(.*?\)),\s*(\(.*?\)),\s*(.*?)$', line)
                         if matches:
                             x_stage = float(eval(matches.group(1)))
                             y_stage = float(eval(matches.group(2)))
