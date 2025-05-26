@@ -17,7 +17,6 @@ import re
 # Set to None or empty dict to extract all keys (original behavior)
 SELECTED_KEYS = {
     # Example configuration - modify these based on your FITS files
-    'FILENAME': 'Filename',
     'PMOTOR0': 'Stage_X',
     'PMOTOR1': 'Stage_Y',
     'PMOTOR3': 'Stage_Theta',

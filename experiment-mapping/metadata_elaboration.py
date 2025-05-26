@@ -53,7 +53,7 @@ for _, dataset in coarse_scans.iterrows():
     y_min = round(dataset['Scan_start_y'] - dataset['Logical_stage_Y'], 1)  # Logical stage starting y - logical stage y
     y_max = round(dataset['Scan_end_y'] - dataset['Logical_stage_Y'], 1)  # Logical stage ending y - logical stage y
     phi = round(dataset['Stage_Phi'], 1)  # Stage phi
-    label = dataset['Filename'].split('_', 1)[-1].rsplit('.', 1)[0].lstrip('0')
+    label = dataset['FILENAME'].split('_', 1)[-1].rsplit('.', 1)[0].lstrip('0')
     coarse_scans_list.append(f"{x_stage}, {y_stage}, ({x_min}, {x_max}), ({y_min}, {y_max}), {phi}, '{label}'")
 
 # Prepare data for [FINE SCANS] section
@@ -66,7 +66,7 @@ for _, dataset in fine_scans.iterrows():
     y_min = dataset['Scan_start_y']  # Capillary starting y
     y_max = dataset['Scan_end_y']  # Capillary ending y
     phi = round(dataset['Stage_Phi'], 1)  # Stage phi
-    label = dataset['Filename'].split('_', 1)[-1].rsplit('.', 1)[0].lstrip('0')
+    label = dataset['FILENAME'].split('_', 1)[-1].rsplit('.', 1)[0].lstrip('0')
     fine_scans_list.append(f"{x_stage}, {y_stage}, ({x_min}, {x_max}), ({y_min}, {y_max}), {phi}, '{label}'")
 
 # Prepare data for [SINGLE-SPOT MEASUREMENTS] section
@@ -76,7 +76,7 @@ for _, dataset in single_spot_measurements.iterrows():
     y_stage = round(dataset['Stage_Y'], 3)  # Physical stage y
     x_scan = round(dataset['Capillary_X'], 3)  # Capillary x
     y_scan = round(dataset['Capillary_Y'], 3)  # Capillary y
-    label = dataset['Filename'].split('_', 1)[-1].rsplit('.', 1)[0].lstrip('0')
+    label = dataset['FILENAME'].split('_', 1)[-1].rsplit('.', 1)[0].lstrip('0')
     single_spot_measurements_list.append(f"{x_stage}, {y_stage}, {x_scan}, {y_scan}, '{label}'")
 
 # Write the results to 'MeasureCoords.txt'
