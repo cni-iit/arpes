@@ -1,10 +1,10 @@
 import matplotlib.pyplot as plt
+import matplotlib.transforms as transforms
 import numpy as np
 import os
 import glob
 import re
 import ast
-from collections import defaultdict
 
 def read_measure_coords(file_path):
     """
@@ -13,11 +13,11 @@ def read_measure_coords(file_path):
     The file format should be:
     
     [COARSE SCANS]
-    x_stage, y_stage, (x_min, x_max), (y_min, y_max), label
+    x_stage, y_stage, (x_min, x_max), (y_min, y_max), phi, label
     ...
     
     [FINE SCANS]
-    x_stage, y_stage, (x_min, x_max), (y_min, y_max), label
+    x_stage, y_stage, (x_min, x_max), (y_min, y_max), phi, label
     ...
     
     [SINGLE-SPOT MEASUREMENTS]
@@ -26,8 +26,8 @@ def read_measure_coords(file_path):
     
     Returns:
         tuple: (coarse_scans, fine_scans, single-spot measurements) where:
-            - coarse_scans is a list of tuples (x_stage, y_stage, x_scan_exten, y_scan_exten, label)
-            - fine_scans is a list of tuples (x_stage, y_stage, x_scan_exten, y_scan_exten, label)
+            - coarse_scans is a list of tuples (x_stage, y_stage, x_scan_exten, y_scan_exten, phi, label)
+            - fine_scans is a list of tuples (x_stage, y_stage, x_scan_exten, y_scan_exten, phi, label)
             - single-spot measurements is a list of tuples (x, y, label)
     """
     try:
@@ -60,28 +60,30 @@ def read_measure_coords(file_path):
                 if current_section == 'coarse scans':
                     try:
                         # Use regex to find all parts
-                        matches = re.match(r'(.*?),\s*(.*?),\s*(\(.*?\)),\s*(\(.*?\)),\s*(.*?)$', line)
+                        matches = re.match(r'(.*?),\s*(.*?),\s*(\(.*?\)),\s*(\(.*?\)),\s*(.*?),\s*(.*?)$', line)
                         if matches:
                             x_stage = float(eval(matches.group(1)))
                             y_stage = float(eval(matches.group(2)))
                             x_scan_exten = ast.literal_eval(matches.group(3))
                             y_scan_exten = ast.literal_eval(matches.group(4))
-                            label = matches.group(5).strip("'\"")
-                            coarse_scans.append((x_stage, y_stage, x_scan_exten, y_scan_exten, label))
+                            phi = float(eval(matches.group(5)))
+                            label = matches.group(6).strip("'\"")
+                            coarse_scans.append((x_stage, y_stage, x_scan_exten, y_scan_exten, phi, label))
                     except Exception as e:
                         print(f"! Error parsing coarse scan: {line}. Error: {str(e)}")
                 
                 elif current_section == 'fine scans':
                     try:
                         # Use regex to find all parts
-                        matches = re.match(r'(.*?),\s*(.*?),\s*(\(.*?\)),\s*(\(.*?\)),\s*(.*?)$', line)
+                        matches = re.match(r'(.*?),\s*(.*?),\s*(\(.*?\)),\s*(\(.*?\)),\s*(.*?),\s*(.*?)$', line)
                         if matches:
                             x_stage = float(eval(matches.group(1)))
                             y_stage = float(eval(matches.group(2)))
                             x_scan_exten = ast.literal_eval(matches.group(3))
                             y_scan_exten = ast.literal_eval(matches.group(4))
-                            label = matches.group(5).strip("'\"")
-                            fine_scans.append((x_stage, y_stage, x_scan_exten, y_scan_exten, label))
+                            phi = float(eval(matches.group(5)))
+                            label = matches.group(6).strip("'\"")
+                            fine_scans.append((x_stage, y_stage, x_scan_exten, y_scan_exten, phi, label))
                     except Exception as e:
                         print(f"! Error parsing fine scan: {line}. Error: {str(e)}")
                 
@@ -157,13 +159,16 @@ def merge_overlapping_points(point_measurements, ax, overlap_threshold=0.02):
         # Combine labels (remove duplicates while preserving order)
         labels = []
         seen = set()
-        for point in group:
+        for idx, point in enumerate(group):
             if point[2] not in seen:
-                labels.append(point[2])
+                if idx != 0 and idx%5==0:  # Starts a new line in the label every 5 entries
+                    labels.append('\n'+point[2])
+                else:
+                    labels.append(point[2])
                 seen.add(point[2])
         
         # Join labels with a separator
-        combined_label = ", ".join(labels)
+        combined_label = ",".join(labels)
         
         merged_points.append((avg_x, avg_y, combined_label))
     
@@ -175,14 +180,14 @@ def plot_graph_from_file(file_path, coarse_scans, fine_scans, point_measurements
     
     Args:
         file_path: Path to the txt file containing intensity data
-        coarse_scans: List of coarse scans as tuples (x_stage, y_stage, x_scan_exten, y_scan_exten, label)
-        fine_scans: List of fine scans as tuples (x_stage, y_stage, x_scan_exten, y_scan_exten, label)
+        coarse_scans: List of coarse scans as tuples (x_stage, y_stage, x_scan_exten, y_scan_exten, phi, label)
+        fine_scans: List of fine scans as tuples (x_stage, y_stage, x_scan_exten, y_scan_exten, phi, label)
         point_measurements: List of single-spot measurements as tuples (x, y, label)
         save_path: If provided, save the plot to this path instead of displaying it
     """
     try:
         # Load data from file, handling empty cells and non-numeric data
-        data = np.genfromtxt(file_path, delimiter='\t', filling_values=np.nan)
+        data = np.genfromtxt(file_path, delimiter='\t', filling_values=np.nan, skip_header=1)
         
         # Extract x and y values
         x_values = data[1:, 0]
@@ -205,26 +210,32 @@ def plot_graph_from_file(file_path, coarse_scans, fine_scans, point_measurements
         # Ensure units on both axes have the same length in pixels
         ax.set_aspect('equal', adjustable='box')
         
-        # Filter and plot point measurements that are within the data limits
+        # Filter point measurements that are within the data limits
         valid_points = []
         for point in point_measurements:
             x, y, label = point
             
             if x_min <= x <= x_max and y_min <= y <= y_max:
                 valid_points.append((x, y, label))
-                ax.plot(x, y, 'o', label=label)
+        
+        # Merge single-spot measurements that would overlap
+        merged_points = merge_overlapping_points(valid_points, ax, overlap_threshold=0.02)
+        
+        # Plot all single-spot measurements (possibly merged)
+        for point in merged_points:
+            x, y, label = point
+            ax.plot(x, y, 'o', label=label)
         
         # Filter and plot coarse scans with at least two vertices inside limits
         for rect in coarse_scans:
-            x_stage, y_stage, x_scan_exten, y_scan_exten, label = rect
+            x_stage, y_stage, x_scan_exten, y_scan_exten, phi, label = rect
             
-            # Calculate rectangle corners
             x_left = x_stage + x_scan_exten[0]
             y_bottom = y_stage + y_scan_exten[0]
             x_right = x_stage + x_scan_exten[1]
             y_top = y_stage + y_scan_exten[1]
             
-            # Check if at least two vertices are within the data limits
+            # Calculate rectangle corners
             vertices = [
                 (x_left, y_bottom),  # Bottom-left
                 (x_right, y_bottom), # Bottom-right
@@ -232,25 +243,39 @@ def plot_graph_from_file(file_path, coarse_scans, fine_scans, point_measurements
                 (x_left, y_top)      # Top-left
             ]
             
+            # Check if at least two vertices are within the data limits
             vertices_in_bounds = sum(1 for vx, vy in vertices if 
                                      x_min <= vx <= x_max and y_min <= vy <= y_max)
             
             if vertices_in_bounds >= 2:
                 # Plot the rectangle
-                rect_patch = plt.Rectangle((x_left, y_bottom), 
-                                          x_right - x_left, 
-                                          y_top - y_bottom, 
-                                          linestyle='--', 
-                                          edgecolor='black', 
-                                          facecolor='none')
+                rect_patch = plt.Rectangle((x_scan_exten[0], y_scan_exten[0]),
+                                            x_right - x_left, y_top - y_bottom,
+                                            linestyle='--', edgecolor='black', facecolor='none')
+                t = transforms.Affine2D().rotate(phi).translate(x_stage, y_stage) + ax.transData
+                rect_patch.set_transform(t)
                 ax.add_patch(rect_patch)
+                
                 # Add label
-                ax.text(x_left, y_bottom, f' {label}', 
-                        verticalalignment='bottom', horizontalalignment='left')
+                # Calculate the bottom-left corner after rotation
+                corner_x = x_scan_exten[0]
+                corner_y = y_scan_exten[0]
+                # Rotate the corner point
+                cos_phi = np.cos(phi)
+                sin_phi = np.sin(phi)
+                rotated_x = corner_x * cos_phi - corner_y * sin_phi
+                rotated_y = corner_x * sin_phi + corner_y * cos_phi
+                # Translate to final position
+                label_x = x_stage + rotated_x
+                label_y = y_stage + rotated_y
+                
+                ax.text(label_x, label_y, f' {label}',
+                verticalalignment='bottom', horizontalalignment='left',
+                rotation=phi*180/np.pi)
         
         # Filter and plot fine scans with at least two vertices inside limits
         for rect in fine_scans:
-            x_stage, y_stage, x_scan_exten, y_scan_exten, label = rect
+            x_stage, y_stage, x_scan_exten, y_scan_exten, phi, label = rect
             
             # Calculate rectangle corners
             x_left = x_stage + x_scan_exten[0]
@@ -258,7 +283,6 @@ def plot_graph_from_file(file_path, coarse_scans, fine_scans, point_measurements
             x_right = x_stage + x_scan_exten[1]
             y_top = y_stage + y_scan_exten[1]
             
-            # Check if at least two vertices are within the data limits
             vertices = [
                 (x_left, y_bottom),  # Bottom-left
                 (x_right, y_bottom), # Bottom-right
@@ -266,21 +290,35 @@ def plot_graph_from_file(file_path, coarse_scans, fine_scans, point_measurements
                 (x_left, y_top)      # Top-left
             ]
             
+            # Check if at least two vertices are within the data limits
             vertices_in_bounds = sum(1 for vx, vy in vertices if 
                                      x_min <= vx <= x_max and y_min <= vy <= y_max)
             
             if vertices_in_bounds >= 2:
                 # Plot the rectangle
-                rect_patch = plt.Rectangle((x_left, y_bottom), 
-                                          x_right - x_left, 
-                                          y_top - y_bottom, 
-                                          linestyle='--', 
-                                          edgecolor='black', 
-                                          facecolor='none')
+                rect_patch = plt.Rectangle((x_scan_exten[0], y_scan_exten[0]),
+                                            x_right - x_left, y_top - y_bottom,
+                                            linestyle='--', edgecolor='black', facecolor='none')
+                t = transforms.Affine2D().rotate(phi).translate(x_stage, y_stage) + ax.transData
+                rect_patch.set_transform(t)
                 ax.add_patch(rect_patch)
+                
                 # Add label
-                ax.text(x_left, y_bottom, f' {label}', 
-                        verticalalignment='bottom', horizontalalignment='left')
+                # Calculate the bottom-left corner after rotation
+                corner_x = x_scan_exten[0]
+                corner_y = y_scan_exten[0]
+                # Rotate the corner point
+                cos_phi = np.cos(phi)
+                sin_phi = np.sin(phi)
+                rotated_x = corner_x * cos_phi - corner_y * sin_phi
+                rotated_y = corner_x * sin_phi + corner_y * cos_phi
+                # Translate to final position
+                label_x = x_stage + rotated_x
+                label_y = y_stage + rotated_y
+                
+                ax.text(label_x, label_y, f' {label}',
+                verticalalignment='bottom', horizontalalignment='left',
+                rotation=phi*180/np.pi)
         
         # Add legend if there are valid points
         if valid_points:
@@ -327,22 +365,24 @@ def create_overview_plot(coarse_scans, fine_scans, point_measurements, save_path
     
     # Add coarse scans
     for rect in coarse_scans:
-        x_stage, y_stage, x_scan_exten, y_scan_exten, _ = rect
-        x_left = x_stage + x_scan_exten[0]
-        y_bottom = y_stage + y_scan_exten[0]
-        x_right = x_stage + x_scan_exten[1]
-        y_top = y_stage + y_scan_exten[1]
+        x_stage, y_stage, x_scan_exten, y_scan_exten, _, _ = rect
+        radius = np.sqrt(x_scan_exten[0]**2 + y_scan_exten[0]**2)
+        x_left = x_stage - radius
+        y_bottom = y_stage - radius
+        x_right = x_stage + radius
+        y_top = y_stage + radius
         
         all_x_coords.extend([x_left, x_right])
         all_y_coords.extend([y_bottom, y_top])
     
     # Add fine scans
     for rect in fine_scans:
-        x_stage, y_stage, x_scan_exten, y_scan_exten, _ = rect
-        x_left = x_stage + x_scan_exten[0]
-        y_bottom = y_stage + y_scan_exten[0]
-        x_right = x_stage + x_scan_exten[1]
-        y_top = y_stage + y_scan_exten[1]
+        x_stage, y_stage, x_scan_exten, y_scan_exten, _, _ = rect
+        radius = np.sqrt(x_scan_exten[0]**2 + y_scan_exten[0]**2)
+        x_left = x_stage - radius
+        y_bottom = y_stage - radius
+        x_right = x_stage + radius
+        y_top = y_stage + radius
         
         all_x_coords.extend([x_left, x_right])
         all_y_coords.extend([y_bottom, y_top])
@@ -369,39 +409,75 @@ def create_overview_plot(coarse_scans, fine_scans, point_measurements, save_path
     
     # Plot all coarse scans
     for rect in coarse_scans:
-        x_stage, y_stage, x_scan_exten, y_scan_exten, label = rect
+        x_stage, y_stage, x_scan_exten, y_scan_exten, phi, label = rect
         
         # Calculate rectangle corners
-        x_left = x_stage + x_scan_exten[0]
-        y_bottom = y_stage + y_scan_exten[0]
+        x_left = x_scan_exten[0]  # relative to center
+        y_bottom = y_scan_exten[0]  # relative to center
         width = x_scan_exten[1] - x_scan_exten[0]
         height = y_scan_exten[1] - y_scan_exten[0]
         
         # Plot the rectangle
         rect_patch = plt.Rectangle((x_left, y_bottom), width, height,
                                   linestyle='--', edgecolor='black', facecolor='none')
+        
+        t = transforms.Affine2D().rotate(phi).translate(x_stage, y_stage) + ax.transData
+        rect_patch.set_transform(t)
+        
         ax.add_patch(rect_patch)
+        
         # Add label
-        ax.text(x_left, y_bottom, f' {label}',
-                verticalalignment='bottom', horizontalalignment='left')
+        # Calculate the bottom-left corner after rotation
+        corner_x = x_left
+        corner_y = y_bottom
+        # Rotate the corner point
+        cos_phi = np.cos(phi)
+        sin_phi = np.sin(phi)
+        rotated_x = corner_x * cos_phi - corner_y * sin_phi
+        rotated_y = corner_x * sin_phi + corner_y * cos_phi
+        # Translate to final position
+        label_x = x_stage + rotated_x
+        label_y = y_stage + rotated_y
+        
+        ax.text(label_x, label_y, f' {label}',
+                verticalalignment='bottom', horizontalalignment='left',
+                rotation=phi*180/np.pi)
     
     # Plot all fine scans
     for rect in fine_scans:
-        x_stage, y_stage, x_scan_exten, y_scan_exten, label = rect
+        x_stage, y_stage, x_scan_exten, y_scan_exten, phi, label = rect
         
         # Calculate rectangle corners
-        x_left = x_stage + x_scan_exten[0]
-        y_bottom = y_stage + y_scan_exten[0]
+        x_left = x_scan_exten[0]  # relative to center
+        y_bottom = y_scan_exten[0]  # relative to center
         width = x_scan_exten[1] - x_scan_exten[0]
         height = y_scan_exten[1] - y_scan_exten[0]
         
         # Plot the rectangle
         rect_patch = plt.Rectangle((x_left, y_bottom), width, height,
                                   linestyle='--', edgecolor='black', facecolor='none')
+        
+        t = transforms.Affine2D().rotate(phi).translate(x_stage, y_stage) + ax.transData
+        rect_patch.set_transform(t)
+        
         ax.add_patch(rect_patch)
+        
         # Add label
-        ax.text(x_left, y_bottom, f' {label}',
-                verticalalignment='bottom', horizontalalignment='left')
+        # Calculate the bottom-left corner after rotation
+        corner_x = x_left
+        corner_y = y_bottom
+        # Rotate the corner point
+        cos_phi = np.cos(phi)
+        sin_phi = np.sin(phi)
+        rotated_x = corner_x * cos_phi - corner_y * sin_phi
+        rotated_y = corner_x * sin_phi + corner_y * cos_phi
+        # Translate to final position
+        label_x = x_stage + rotated_x
+        label_y = y_stage + rotated_y
+        
+        ax.text(label_x, label_y, f' {label}',
+                verticalalignment='bottom', horizontalalignment='left',
+                rotation=phi*180/np.pi)
     
     # Set the axis limits
     ax.set_xlim(x_min, x_max)
@@ -426,7 +502,7 @@ def create_overview_plot(coarse_scans, fine_scans, point_measurements, save_path
     plt.title("Overview of all scans and single-spot measurements")
     plt.xlabel("X Coordinate")
     plt.ylabel("Y Coordinate")
-    # plt.tight_layout()
+    plt.tight_layout()
     
     if save_path:
         plt.savefig(save_path)
@@ -466,13 +542,13 @@ def process_all_txt_files(coords_file_name="MeasureCoords.txt", output_dir=None)
         # Create a template file
         with open(coords_file_path, 'w') as f:
             f.write("[COARSE SCANS]\n")
-            f.write("# Format: x_stage, y_stage, (x_min, x_max), (y_min, y_max), label\n")
-            f.write("448.8, 4260.7, (-100, 100), (-100, 100), '2'\n")
-            f.write("418.7, 4280.7, (-100, 100), (-100, 100), '3'\n")
+            f.write("# Format: x_stage, y_stage, (x_min, x_max), (y_min, y_max), phi, label\n")
+            f.write("448.8, 4260.7, (-100, 100), (-100, 100), 0.0, '2'\n")
+            f.write("418.7, 4280.7, (-100, 100), (-100, 100), 0.0, '3'\n")
             f.write("[FINE SCANS]\n")
-            f.write("# Format: x_stage, y_stage, (x_min, x_max), (y_min, y_max), label\n")
-            f.write("448.8, 4260.7, (-40, 40), (-30, 30), '4'\n")
-            f.write("418.7, 4280.7, (-40, 40), (-30, 30), '5'\n")
+            f.write("# Format: x_stage, y_stage, (x_min, x_max), (y_min, y_max), phi, label\n")
+            f.write("448.8, 4260.7, (-40, 40), (-30, 30), 0.0, '4'\n")
+            f.write("418.7, 4280.7, (-40, 40), (-30, 30), 20.0, '5'\n")
             f.write("[SINGLE-SPOT MEASUREMENTS]\n")
             f.write("# Format: x_stage, y_stage, x_scan, y_scan, label\n")
             f.write("418.6, 4280.7, 20.5, -6.8, '6'\n")
