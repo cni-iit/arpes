@@ -17,7 +17,7 @@ for i in range(1, len(phi_motor_values)):
     phi_var = phi_motor_values.iloc[i] - phi_motor_values.iloc[i-1]
     
     # Check if there is a significant change in phi
-    if np.degrees(abs(phi_var)):
+    if np.degrees(abs(phi_var))>1:
         
         # Offset all stage X and Y values from now on to account for stage adjustment
         df.loc[i:,'Stage_X'] += x_motor_values.iloc[i-1] - x_motor_values.iloc[i]
