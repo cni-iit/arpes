@@ -1,4 +1,5 @@
 # arpes
+
 CNI-IIT's repository of ARPES data analysis and plotting procedures.
 
 ***
@@ -6,10 +7,10 @@ CNI-IIT's repository of ARPES data analysis and plotting procedures.
 ## Features
 
 ### Currently available
+
 - Plot and save k-E dispersions and k-k isoenergetic maps previously exported as `.csv` from *Igor Pro* (`.ipynb` and `.py` version)
 
 ### To be added
-
 
 ***
 
@@ -19,7 +20,9 @@ The code available in the stable branch is certified to work with **Python 3.12.
 Download a stable release of your choice and move the relevant code in your data folder, then run the code.
 
 ### Required packages
+
 The required packages are listed below, with mutually compatible suggested versions:
+
 - `numpy 2.2.1`
 - `pandas 2.2.3`
 - `matplotlib 3.10.0`
@@ -31,7 +34,9 @@ Begin the packages installation from `jupyterlab` to automatically install the r
 Conversely, the packages from `jupyterlab` onwards are optional if the user intends to work with `.py` scripts only.
 
 ### Environment setup
+
 To set up a proper environment, follow the **Standard environment creation procedure**:
+
 1. Install [*miniconda3*](https://docs.anaconda.com/miniconda/install/),
 2. Run the *Anaconda PowerShell Prompt*,
 3. Input `conda create --name arpes`, then `activate arpes`,
@@ -40,7 +45,9 @@ To set up a proper environment, follow the **Standard environment creation proce
 Please, refer to the organization's guidelines for further details.
 
 ### Running the code
+
 The provided code is intended to be executed via our **Standard execution toolbox**, i.e.:
+
 - via *Jupyter Lab* installed and launched through *miniconda3*, for any `.ipynb` files (jupyter notebooks), or
 - via [*VS Code*](https://code.visualstudio.com/download) endowed with *Python* and/or *Jupyter* extensions, for any `.py` script and/or `.ipynb` files, respectively.
 
@@ -52,6 +59,7 @@ Please, refer to the organization's guidelines for further details.
 
 Any help in further developing this repository is more than welcomed!  
 To start contributing to our code, please employ our **Standard development toolbox**, i.e.:
+
 - [*Git*](https://git-scm.com/downloads) as the source control manager,
 - [*VS Code*](https://code.visualstudio.com/download) as the IDE, extended by:
   - *Python* and *Jupyter* support extensions,
