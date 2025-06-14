@@ -17,7 +17,8 @@ memory = Memory(location='cachedir', verbose=0)
 # READING FUNCTIONS #
 #===================#
 
-# Read a single Energy vs kx, Igor-exported, tab-separated .txt file
+# Read a single Energy vs k, Igor-exported, tab-separated .txt file
+#  .txt -> md-d(E,k) dict
 def read_Ek_igor_txt(
         file_path: Union[str, Path]
     ) -> Dict[str, Any]:
@@ -108,6 +109,7 @@ def natural_sort_key(
             for text in re.split(r'(\d+)', path.stem)]
 
 # Read all Energy vs kx, Igor-exported, tab-separated .txt files in a folder
+#  batch of .txt -> dict of files, each with md-d(E,k) dict
 @memory.cache
 def read_all_Ek_igor_txt(
         folder_path: Optional[Union[str, Path]] = None, 
@@ -282,7 +284,8 @@ def get_dict_summary(
 
 #=== EDCs ===#
 
-# Extract a single EDC from a dataframe, possibly interpolating the intensities
+# Extract a single EDC from an E-k dataset, possibly interpolating the intensities
+#  md-d(E,k) dict -> md-d(E) dict
 def extract_edc(
         Ek_dataset: Dict[str, Any], 
         target_k: float, 
@@ -393,7 +396,8 @@ def extract_edc(
     
     return {'metadata': edc_meta, 'data': edc}
 
-# Extract multiple EDCs from a dataframe, possibly interpolating the intensities
+# Extract multiple EDCs from an E-k dataset, possibly interpolating the intensities
+#  md-d(E,k) dict -> dict of k, each with md-d(E) dict
 @memory.cache
 def extract_multiple_edc(
         Ek_dataset: Dict[str, Any], 
@@ -433,7 +437,11 @@ def extract_multiple_edc(
     
     return edc_dict
 
-# Extract all EDCs from a dictionary of E-k datasets, possibly interpolating the intensities
+# Extract all EDCs from a file collection of E-k datasets, possibly interpolating the intensities
+#  dict of files, each with md-d(E,k) dict -> 
+#   A.  dict of files, each with md-d(E) dict                       (if single k was asked)
+#   B1. dict of files, each with dict of k, each with md-d(E) dict  (if multiple k were asked)
+#   B2. dict of files, each with md-d(E,kn) dict                    (if multiple k were asked and combine k was required)
 @memory.cache
 def extract_all_edc(
         Ek_dict: Dict[str, Dict[str, Any]],
@@ -498,7 +506,9 @@ def extract_all_edc(
     
     return edc_results
 
-# Prepare a single dataframe out of a dictionary of EDCs
+# Prepare a single dataframe out of a dictionary of individual EDC (keys being either k values or files)
+#  A. dict of k, each with md-d(E) dict     -> d(E,kn)
+#  B. dict of files, each with md-d(E) dict -> d(E,files)
 def compare_edcs(
         edc_dict: Dict[str, Dict[str, Any]], 
         normalize: bool = False,
@@ -549,6 +559,7 @@ def compare_edcs(
     
     return combined_df
 
+# Internal version (for extract_all_edc B2 variant)
 def _combine_multiple_edcs(
         edc_results: Dict[str, Dict[str, Dict[str, Any]]], 
         target_k_list: List[float]
