@@ -5,12 +5,9 @@ from scipy.special import voigt_profile
 import warnings
 from typing import Dict, Tuple, List, Optional
 import matplotlib.pyplot as plt
-from joblib import Memory
-
-memory = Memory(location='cachedir', verbose=0)
 
 
-# @memory.cache
+
 def fit_energy_distribution_curve(
         edc_data: Dict, 
         range: Optional[Tuple[float, float]] = None,
@@ -119,7 +116,7 @@ def _fermi_dirac(energy: np.ndarray, temperature: float, kb: float) -> np.ndarra
 def _voigt_profile(energy: np.ndarray, center: float, amplitude: float, sigma: float, gamma: float) -> np.ndarray:
     """Voigt profile (convolution of Gaussian and Lorentzian)."""
     # Use scipy's voigt_profile which is more numerically stable
-    return amplitude * voigt_profile(energy - center, sigma, gamma)
+    return amplitude * voigt_profile(energy - center, sigma, gamma) / voigt_profile(0, sigma, gamma)
 
 
 def _voigt_fermi_product(energy: np.ndarray, center: float, amplitude: float, sigma: float, gamma: float, temperature: float, kb: float) -> np.ndarray:
@@ -214,6 +211,9 @@ def _detect_peaks(energy: np.ndarray, intensity: np.ndarray, min_height: float, 
     # Normalize intensity for peak detection
     intensity_norm = (intensity - intensity.min()) / (intensity.max() - intensity.min())
     
+    # Apply a Savitzky-Golay filter for improving peak detection in noisy data
+    intensity_norm = signal.savgol_filter(intensity_norm, 10, 1)
+    
     # Find peaks
     peaks, properties = signal.find_peaks(intensity_norm, height=min_height, prominence=prominence)
     
@@ -221,7 +221,7 @@ def _detect_peaks(energy: np.ndarray, intensity: np.ndarray, min_height: float, 
     peak_energies = energy[peaks].tolist()
     
     # Sort peaks by intensity (highest first)
-    peak_intensities = intensity[peaks]
+    peak_intensities = intensity_norm[peaks]
     sorted_indices = np.argsort(peak_intensities)[::-1]
     
     return [peak_energies[i] for i in sorted_indices]
@@ -243,7 +243,7 @@ def _iterative_peak_fitting(
         peak_energy = initial_peaks[n_peaks]
         
         # Initial parameter guess for new peak
-        peak_intensity = np.interp(peak_energy, energy, current_residual)
+        peak_intensity = max(np.interp(peak_energy, energy, current_residual) , 0.01)
         initial_guess = [peak_energy, peak_intensity, 0.1, 0.1]  # center, amp, sigma, gamma
         
         # Add to current parameter list
@@ -266,7 +266,7 @@ def _iterative_peak_fitting(
                 break
             
             current_residual = new_residual
-            
+        
         except Exception as e:
             warnings.warn(f"Peak fitting failed at peak {n_peaks + 1}: {str(e)}")
             break
@@ -302,8 +302,8 @@ def _fit_multiple_peaks(
         bounds.extend([
             (energy.min(), energy.max()),  # center
             (0, intensity.max() * 10),     # amplitude
-            (0.01, 2.0),                   # sigma
-            (0.01, 2.0)                    # gamma
+            (0.01, 0.3),                   # sigma
+            (0.001, 0.3)                    # gamma
         ])
     
     # Perform fit
