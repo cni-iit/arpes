@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import json
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, Tuple, List
 import re
@@ -93,6 +94,45 @@ def read_kE_igor_txt(
     return {'metadata': df_meta, 'data': df}
 
 
+# Read a single kE dataset from a .csv file with JSON header
+#  FROM  .csv 
+#    TO  { md:{}, d:DF(k,E) }
+
+def read_kE_dataset_from_csv(file_path: Union[str, Path]) -> Dict[str, Any]:
+    """
+    Reads a CSV file with metadata as commented JSON at the top and tabular data below.
+    
+    Parameters:
+    -----------
+    file_path : str or Path 
+        Path to the CSV file.
+    
+    Returns:
+        dict: Dictionary with 'metadata' and 'data' keys.
+    """
+    metadata_lines = []
+    data_lines = []
+    
+    # Read the file and separate metadata and data lines
+    with open(file_path, 'r') as f:
+        for line in f:
+            if line.startswith('#'):
+                metadata_lines.append(line[1:].strip())  # Remove '#' and strip whitespace
+            else:
+                data_lines.append(line)
+    
+    # Join metadata lines and parse JSON
+    metadata_json = '\n'.join(metadata_lines)
+    metadata = json.loads(metadata_json)
+    
+    # Read the data into a DataFrame using pandas
+    from io import StringIO
+    data_csv = ''.join(data_lines)
+    data = pd.read_csv(StringIO(data_csv), index_col=0)
+    
+    return {'metadata': metadata, 'data': data}
+
+
 
 #======================#
 # VALIDATION FUNCTIONS #
@@ -154,6 +194,43 @@ def _validate_Ek_dataset(
 #==================#
 # EXPORT FUNCTIONS #
 #==================#
+
+
+# Save a single kE dataset as a .csv file
+#  FROM  { md:{}, d:DF(k,E) }
+#    TO  .csv
+
+def save_kE_dataset_to_csv(
+        kE_dataset : Dict[str, Any],
+        filename : Union[str, Path]
+    ):
+    """
+    Saves a kE dataset (with 'metadata' and 'data' keys) to a CSV file.
+    Metadata is written as commented JSON at the top of the file.
+    
+    Parameters:
+    -----------
+    kE_dataset : dict
+        Dictionary with 'metadata' and 'data' keys.
+    filename : str or Path
+        Path to the output CSV file.
+    """
+    # Begin by converting a possible string to a Path object
+    file_path = Path(filename)
+    
+    # Extract metadata and data
+    metadata = kE_dataset.get('metadata', {})
+    data = kE_dataset.get('data')
+    
+    # Open the file and write metadata as commented JSON
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write("# Metadata\n")
+        for line in json.dumps(metadata, indent=2).splitlines():
+            f.write(f"# {line}\n")
+        f.write("# Data\n")
+    
+    # Append the data to the file
+    data.to_csv(file_path, mode='a')
 
 
 

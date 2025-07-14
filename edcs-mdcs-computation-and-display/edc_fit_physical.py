@@ -1,11 +1,9 @@
 import numpy as np
 import pandas as pd
 from scipy import optimize, signal
-from scipy.special import voigt_profile
 import warnings
 from typing import Dict, Tuple, List, Optional
 import matplotlib.pyplot as plt
-
 
 
 def fit_energy_distribution_curve(
@@ -17,10 +15,16 @@ def fit_energy_distribution_curve(
         min_peak_height: float = 0.1,
         peak_detection_prominence: float = 0.1,
         convergence_threshold: float = 1e-6,
-        max_iterations: int = 1000
+        max_iterations: int = 1000,
+        instrumental_sigma: Optional[float] = None
     ) -> Dict:
     """
-    Fit an Energy Distribution Curve with Voigt-Fermi convolutions.
+    Fit an Energy Distribution Curve with physically accurate Lorentzian-Fermi-Gaussian model.
+    
+    Each peak is modeled as:
+    1. Lorentzian profile (intrinsic line shape)
+    2. Multiplied by Fermi-Dirac distribution (electronic occupation)
+    3. Convolved with Gaussian (instrumental resolution)
     
     Parameters:
     -----------
@@ -45,6 +49,8 @@ def fit_energy_distribution_curve(
         Convergence threshold for fitting
     max_iterations : int
         Maximum iterations for optimization
+    instrumental_sigma : float, optional
+        Gaussian width for instrumental broadening. If None, estimated from data
         
     Returns:
     --------
@@ -67,6 +73,12 @@ def fit_energy_distribution_curve(
     # Physical constants
     kb = 8.617333e-5  # Boltzmann constant in eV/K
     
+    # Estimate instrumental resolution if not provided
+    if instrumental_sigma is None:
+        # Estimate from energy resolution (typical values for photoemission)
+        energy_range = energy.max() - energy.min()
+        instrumental_sigma = energy_range / 1000  # Conservative estimate
+    
     # Step 1: Background subtraction
     background = _fit_background(energy, intensity, background_type)
     intensity_corrected = intensity - background
@@ -75,9 +87,9 @@ def fit_energy_distribution_curve(
     peak_positions = _detect_peaks(energy, intensity_corrected, min_peak_height, peak_detection_prominence)
     
     # Step 3: Iterative peak fitting
-    fitted_params, final_residual = _iterative_peak_fitting(
+    fitted_params, instrumental_sigma_fitted, final_residual = _iterative_peak_fitting(
         energy, intensity_corrected, peak_positions, temperature, kb,
-        max_peaks, convergence_threshold, max_iterations
+        instrumental_sigma, max_peaks, convergence_threshold, max_iterations
     )
     
     # Step 4: Create output DataFrame
@@ -86,12 +98,12 @@ def fit_energy_distribution_curve(
     
     # Add individual peaks
     for i, peak_params in enumerate(fitted_params):
-        peak_curve = _voigt_fermi_product(energy, *peak_params, temperature, kb)
+        peak_curve = _lorentzian_fermi_gaussian_model(energy, *peak_params, temperature, kb, instrumental_sigma_fitted)
         output_df[f'peak_{i+1}'] = peak_curve
     
     # Add envelope (sum of all peaks)
     envelope = np.sum([
-        _voigt_fermi_product(energy, *params, temperature, kb) for params in fitted_params
+        _lorentzian_fermi_gaussian_model(energy, *params, temperature, kb, instrumental_sigma_fitted) for params in fitted_params
         ], axis=0)
     output_df['envelope'] = envelope
     
@@ -102,7 +114,8 @@ def fit_energy_distribution_curve(
         temperature,
         background_type,
         final_residual,
-        len(fitted_params)
+        len(fitted_params),
+        instrumental_sigma_fitted
     )
     
     return {'metadata': output_metadata, 'data': output_df}
@@ -115,21 +128,52 @@ def _fermi_dirac(energy: np.ndarray, temperature: float, kb: float) -> np.ndarra
     return 1.0 / (1.0 + np.exp(np.clip(x, -500, 500)))
 
 
-def _voigt_profile(energy: np.ndarray, center: float, amplitude: float, sigma: float, gamma: float) -> np.ndarray:
-    """Voigt profile (convolution of Gaussian and Lorentzian)."""
-    # Use scipy's voigt_profile which is more numerically stable
-    return amplitude * voigt_profile(energy - center, sigma, gamma) / voigt_profile(0, sigma, gamma)
+def _lorentzian_profile(energy: np.ndarray, center: float, amplitude: float, gamma: float) -> np.ndarray:
+    """Lorentzian profile (natural line shape)."""
+    return amplitude * gamma**2 / ((energy - center)**2 + gamma**2)
 
 
-def _voigt_fermi_product(energy: np.ndarray, center: float, amplitude: float, sigma: float, gamma: float, temperature: float, kb: float) -> np.ndarray:
+def _gaussian_kernel(energy: np.ndarray, sigma: float) -> np.ndarray:
+    """Normalized Gaussian kernel for convolution."""
+    return np.exp(-0.5 * (energy / sigma)**2) / (sigma * np.sqrt(2 * np.pi))
+
+
+def _lorentzian_fermi_gaussian_model(energy: np.ndarray, center: float, amplitude: float,
+                                   gamma: float, temperature: float, kb: float,
+                                   instrumental_sigma: float) -> np.ndarray:
     """
-    Product of Voigt profile and Fermi-Dirac distribution.
-    This represents the broadened spectral line as observed in photoemission.
-    """
-    voigt = _voigt_profile(energy, center, amplitude, sigma, gamma)
-    fermi = _fermi_dirac(energy, temperature, kb)
+    Physical model: Lorentzian * Fermi-Dirac, then convolved with Gaussian.
     
-    return voigt * fermi
+    This represents the complete physics:
+    1. Intrinsic Lorentzian line shape
+    2. Fermi-Dirac cutoff (electronic occupation)
+    3. Instrumental Gaussian broadening
+    """
+    # Step 1: Create Lorentzian profile
+    lorentzian = _lorentzian_profile(energy, center, amplitude, gamma)
+    
+    # Step 2: Multiply by Fermi-Dirac distribution
+    fermi = _fermi_dirac(energy, temperature, kb)
+    lorentzian_fermi = lorentzian * fermi
+    
+    # Step 3: Convolve with Gaussian (instrumental resolution)
+    # For convolution, we need to be careful with the energy grid
+    de = np.abs(energy[1] - energy[0])  # Energy step
+    
+    # Create Gaussian kernel with same energy spacing
+    # Kernel width should be several times sigma
+    kernel_width = int(6 * instrumental_sigma / de)
+    if kernel_width % 2 == 0:
+        kernel_width += 1  # Make odd for symmetry
+    
+    kernel_energy = np.linspace(-3*instrumental_sigma, 3*instrumental_sigma, kernel_width)
+    kernel = _gaussian_kernel(kernel_energy, instrumental_sigma)
+    
+    # Perform convolution
+    # Use 'same' mode to keep same length as input
+    convolved = np.convolve(lorentzian_fermi, kernel, mode='same') * de
+    
+    return convolved
 
 
 def _fit_background(energy: np.ndarray, intensity: np.ndarray, bg_type: str) -> np.ndarray:
@@ -195,7 +239,7 @@ def _shirley_background(energy: np.ndarray, intensity: np.ndarray, max_iter: int
             if i == 0:
                 bg[i] = initial_i
             else:
-                bg[i] = initial_i + (final_i - initial_i) * cumsum[i] / total_integral
+                bg[i] =  initial_i + (final_i - initial_i) * cumsum[i] / total_integral
         
         # Check convergence
         if np.max(np.abs(bg - bg_old)) < tolerance:
@@ -232,13 +276,16 @@ def _detect_peaks(energy: np.ndarray, intensity: np.ndarray, min_height: float, 
 def _iterative_peak_fitting(
         energy: np.ndarray, intensity: np.ndarray,
         initial_peaks: List[float], temperature: float, kb: float,
-        max_peaks: int, threshold: float, max_iter: int
-    ) -> Tuple[List[List[float]], float]:
+        instrumental_sigma: float, max_peaks: int,
+        threshold: float, max_iter: int
+    ) -> Tuple[List[List[float]], float, float]:
     """
     Iteratively fit peaks until convergence or maximum number reached.
+    Includes instrumental_sigma as a fitted parameter.
     """
     fitted_params = []
     current_residual = intensity.copy()
+    fitted_instrumental_sigma = instrumental_sigma
     
     for n_peaks in range(min(len(initial_peaks), max_peaks)):
         # Add next peak
@@ -246,54 +293,72 @@ def _iterative_peak_fitting(
         
         # Initial parameter guess for new peak
         peak_intensity = max(np.interp(peak_energy, energy, current_residual), 0.01)
-        initial_guess = [peak_energy, peak_intensity, 0.1, 0.1]  # center, amp, sigma, gamma
+        initial_guess = [peak_energy, peak_intensity, 0.1]  # center, amplitude, gamma
         
         # Add to current parameter list
         current_params = fitted_params + [initial_guess]
         
-        # Fit all peaks simultaneously
+        # Fit all peaks simultaneously (including instrumental sigma)
         try:
-            fitted_params_flat = _fit_multiple_peaks(energy, intensity, current_params, temperature, kb, max_iter)
+            fitted_params_flat, fitted_sigma = _fit_multiple_peaks(
+                energy, intensity, current_params, temperature, kb, 
+                fitted_instrumental_sigma, max_iter
+            )
             
-            # Reshape parameters
-            fitted_params = [fitted_params_flat[i:i+4] for i in range(0, len(fitted_params_flat), 4)]
+            # Reshape parameters (3 per peak: center, amplitude, gamma)
+            fitted_params = [fitted_params_flat[i:i+3] for i in range(0, len(fitted_params_flat), 3)]
+            fitted_instrumental_sigma = fitted_sigma
             
             # Calculate residual
-            model = np.sum([_voigt_fermi_product(energy, *params, temperature, kb) for params in fitted_params], axis=0)
+            model = np.sum([
+                _lorentzian_fermi_gaussian_model(energy, *params, temperature, kb, fitted_instrumental_sigma) 
+                for params in fitted_params
+                ], axis=0)
             new_residual = intensity - model
             residual_improvement = np.sum((current_residual - new_residual)**2)
             
             # Check for convergence
             if residual_improvement < threshold * np.sum(intensity**2):
                 break
-            
+                
             current_residual = new_residual
-        
+            
         except Exception as e:
             warnings.warn(f"Peak fitting failed at peak {n_peaks + 1}: {str(e)}")
             break
     
     final_residual = np.sqrt(np.mean(current_residual**2))
     
-    return fitted_params, final_residual
+    return fitted_params, fitted_instrumental_sigma, final_residual
 
 
 def _fit_multiple_peaks(
         energy: np.ndarray, intensity: np.ndarray,
         initial_params: List[List[float]], temperature: float, 
-        kb: float, max_iter: int
-    ) -> List[float]:
-    """Fit multiple peaks simultaneously."""
+        kb: float, instrumental_sigma: float, 
+        max_iter: int
+    ) -> Tuple[List[float], float]:
+    """Fit multiple peaks simultaneously, including instrumental sigma."""
     
-    # Flatten parameters
+    # Flatten parameters (3 per peak)
     params_flat = [param for peak_params in initial_params for param in peak_params]
     
+    # Add instrumental sigma to parameters
+    all_params = params_flat + [instrumental_sigma]
+    
     def objective(params):
-        # Reshape parameters
-        peak_params = [params[i:i+4] for i in range(0, len(params), 4)]
+        # Extract instrumental sigma
+        sigma_instr = params[-1]
+        peak_params_flat = params[:-1]
+        
+        # Reshape peak parameters
+        peak_params = [peak_params_flat[i:i+3] for i in range(0, len(peak_params_flat), 3)]
         
         # Calculate model
-        model = np.sum([_voigt_fermi_product(energy, *p_params, temperature, kb) for p_params in peak_params], axis=0)
+        model = np.sum([
+            _lorentzian_fermi_gaussian_model(energy, *p_params, temperature, kb, sigma_instr) 
+            for p_params in peak_params
+        ], axis=0)
         
         # Return residual
         return intensity - model
@@ -304,21 +369,26 @@ def _fit_multiple_peaks(
         bounds.extend([
             (energy.min(), energy.max()),  # center
             (0, intensity.max() * 10),     # amplitude
-            (0.01, 0.3),                   # sigma
-            (0.001, 0.3)                    # gamma
+            (0.001, 0.5),                  # gamma (Lorentzian width)
         ])
+    # Add bounds for instrumental sigma
+    bounds.append((0.001, 1.0))  # instrumental sigma
     
     # Perform fit
     try:
-        result = optimize.least_squares(objective, params_flat, bounds=tuple(zip(*bounds)), max_nfev=max_iter, ftol=1e-12, xtol=1e-12)
-        return result.x.tolist()
+        result = optimize.least_squares(objective, all_params, bounds=tuple(zip(*bounds)), max_nfev=max_iter, ftol=1e-12, xtol=1e-12)
+        fitted_params = result.x[:-1].tolist()
+        fitted_sigma = result.x[-1]
+        return fitted_params, fitted_sigma
     except Exception as e:
         warnings.warn(f"Optimization failed: {str(e)}")
-        return params_flat
+        return params_flat, instrumental_sigma
+
 
 def _create_output_metadata(input_metadata: Dict, fitted_params: List[List[float]],
                           temperature: float, background_type: str,
-                          final_residual: float, n_peaks: int) -> Dict:
+                          final_residual: float, n_peaks: int, 
+                          instrumental_sigma: float) -> Dict:
     """Create comprehensive output metadata."""
     
     output_metadata = input_metadata.copy()
@@ -329,19 +399,22 @@ def _create_output_metadata(input_metadata: Dict, fitted_params: List[List[float
         'background_type': background_type,
         'n_peaks_fitted': n_peaks,
         'final_residual_rms': final_residual,
-        'convergence_achieved': True
+        'instrumental_sigma_eV': instrumental_sigma,
+        'convergence_achieved': True,
+        'model_type': 'Lorentzian_Fermi_Gaussian'
     }
     
     # Add peak parameters
     output_metadata['peaks'] = {}
     for i, params in enumerate(fitted_params):
-        center, amplitude, sigma, gamma = params
+        center, amplitude, gamma = params
         output_metadata['peaks'][f'peak_{i+1}'] = {
             'center_eV': center,
             'amplitude': amplitude,
-            'gaussian_width_eV': sigma,
             'lorentzian_width_eV': gamma,
-            'fwhm_eV': 2 * np.sqrt(2 * np.log(2)) * sigma + gamma  # Approximate FWHM
+            'fwhm_lorentzian_eV': 2 * gamma,  # FWHM of Lorentzian
+            'intrinsic_fwhm_eV': 2 * gamma,   # Before instrumental broadening
+            'observed_fwhm_eV': 2 * np.sqrt(gamma**2 + (instrumental_sigma * 2.355)**2 / 2.355**2)  # After convolution
         }
     
     return output_metadata
@@ -350,25 +423,39 @@ def _create_output_metadata(input_metadata: Dict, fitted_params: List[List[float
 # Example usage and test function
 def test_edc_fitting():
     """Test function with synthetic data."""
-    
-    kb = 8.617333e-5  # Boltzmann constant in eV/K
-    
     # Create synthetic EDC data
     energy = np.linspace(-3, 1, 1000)
     
-    # Create synthetic spectrum with two peaks
-    peak1 = 500 * voigt_profile(energy - (-1.5), 0.15, 0.1)
-    peak2 = 300 * voigt_profile(energy - (-0.1), 0.12, 0.08)
+    # Create synthetic spectrum with two peaks using the new model
+    # Peak 1: Lorentzian * Fermi
+    peak1_lorentz = 500 * 0.1**2 / ((energy - (-1.5))**2 + 0.1**2)
+    peak2_lorentz = 300 * 0.08**2 / ((energy - (-0.5))**2 + 0.08**2)
     
     # Add Fermi cutoff
-    fermi = 1.0 / (1.0 + np.exp(energy / (kb * 300)))
+    fermi = 1.0 / (1.0 + np.exp(energy / (8.617333e-5 * 300)))
+    
+    # Apply Fermi cutoff to peaks
+    peak1_fermi = peak1_lorentz * fermi
+    peak2_fermi = peak2_lorentz * fermi
+    
+    # Convolve with Gaussian (instrumental resolution)
+    sigma_instr = 0.05
+    de = energy[1] - energy[0]
+    kernel_width = int(6 * sigma_instr / de)
+    if kernel_width % 2 == 0:
+        kernel_width += 1
+    
+    kernel_energy = np.linspace(-3*sigma_instr, 3*sigma_instr, kernel_width)
+    kernel = np.exp(-0.5 * (kernel_energy / sigma_instr)**2) / (sigma_instr * np.sqrt(2 * np.pi))
+    
+    peak1 = np.convolve(peak1_fermi, kernel, mode='same') * de
+    peak2 = np.convolve(peak2_fermi, kernel, mode='same') * de
     
     # Add background and noise
-    background = - 20 * (energy-1)
-    background[750:] = np.zeros(250)
-    noise = np.random.normal(0, 10, len(energy))
+    background = 50 + 10 * energy
+    noise = np.random.normal(0, 5, len(energy))
     
-    intensity = (peak1 + peak2) * fermi + background + noise
+    intensity = peak1 + peak2 + background + noise
     
     # Create input dictionary
     edc_input = {
@@ -382,31 +469,14 @@ def test_edc_fitting():
     }
     
     # Fit the data
-    result = fit_energy_distribution_curve(
-        edc_input, 
-        temperature=300,
-        background_type = 'shirley',
-        max_peaks = 10,
-        min_peak_height = 0.1,
-        peak_detection_prominence = 0.1,
-        convergence_threshold = 1e-6,
-        max_iterations = 1000
-    )
+    result = fit_energy_distribution_curve(edc_input, temperature=300, 
+                                         instrumental_sigma=0.05)
     
-    return (result, edc_input)
+    return result
 
 if __name__ == "__main__":
     # Run test
-    test_result, input = test_edc_fitting()
+    test_result = test_edc_fitting()
     print("Test completed successfully!")
     print(f"Number of peaks fitted: {test_result['metadata']['fitting']['n_peaks_fitted']}")
     print(f"Final residual: {test_result['metadata']['fitting']['final_residual_rms']:.6f}")
-    
-    plt.figure()
-    plt.plot(input['data'].index, input['data'], marker='o', ms='1', ls='')
-    for curve in test_result['data'].columns:
-        if curve !='background':
-            plt.plot(test_result['data'].index, test_result['data']['background'] + test_result['data'][curve])
-        else:
-            plt.plot(test_result['data'].index, test_result['data'][curve])
-    plt.show()
